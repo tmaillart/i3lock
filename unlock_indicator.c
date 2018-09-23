@@ -69,6 +69,10 @@ extern int failed_attempts;
 /* The root screen, to determine the DPI. */
 extern xcb_screen_t *screen;
 
+extern cairo_surface_t *frames[FRAME_COUNT];
+extern int total_frame;
+static int f = 0;
+
 /*******************************************************************************
  * Local variables.
  ******************************************************************************/
@@ -129,6 +133,25 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
         cairo_set_source_rgb(xcb_ctx, rgb16[0] / 255.0, rgb16[1] / 255.0, rgb16[2] / 255.0);
         cairo_rectangle(xcb_ctx, 0, 0, resolution[0], resolution[1]);
         cairo_fill(xcb_ctx);
+    }
+
+    if (total_frame > 0) {
+        if (unlock_state == STATE_KEY_ACTIVE || unlock_state == STATE_BACKSPACE_ACTIVE) {
+            for (int screen = 0; total_frame > 0 && screen < xr_screens; screen++) {
+                int x = (xr_resolutions[screen].x + ((xr_resolutions[screen].width / 2) - (cairo_image_surface_get_width(frames[f]) / 2)));
+                int y = (xr_resolutions[screen].y + ((xr_resolutions[screen].height / 2) - (cairo_image_surface_get_height(frames[f]) / 2)));
+                cairo_set_source_surface(xcb_ctx, frames[f], x, y);
+                cairo_paint(xcb_ctx);
+            }
+            if (++f == total_frame)
+                f = 0;
+            cairo_surface_destroy(xcb_output);
+            cairo_surface_destroy(output);
+            cairo_destroy(ctx);
+            cairo_destroy(xcb_ctx);
+            return bg_pixmap;
+        }
+        return bg_pixmap;
     }
 
     if (unlock_indicator &&

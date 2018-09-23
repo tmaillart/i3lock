@@ -12,3 +12,5 @@
     } while (0)
 
 #endif
+
+#define FRAME_COUNT 256

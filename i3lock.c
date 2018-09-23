@@ -21,6 +21,7 @@
 #include <err.h>
 #include <errno.h>
 #include <assert.h>
+#include <dirent.h>
 #ifdef __OpenBSD__
 #include <bsd_auth.h>
 #else
@@ -96,6 +97,10 @@ cairo_surface_t *img = NULL;
 bool tile = false;
 bool ignore_empty_password = false;
 bool skip_repeated_empty_password = false;
+
+cairo_surface_t *frames[FRAME_COUNT];
+int total_frame = 0;
+bool use_timer = true;
 
 /* isutf, u8_dec © 2005 Jeff Bezanson, public domain */
 #define isutf(c) (((c)&0xC0) != 0x80)
@@ -282,10 +287,13 @@ static void input_done(void) {
         errx(1, "unknown uid %u.", getuid());
 
     if (auth_userokay(pw->pw_name, NULL, NULL, password) != 0) {
+        int i;
         DEBUG("successfully authenticated\n");
         clear_password_memory();
 
         ev_break(EV_DEFAULT, EVBREAK_ALL);
+        for (i = 0; i < total_frame; ++i)
+            cairo_surface_destroy(frames[i]);
         return;
     }
 #else
@@ -528,7 +536,8 @@ static void handle_key_press(xcb_key_press_event_t *event) {
         unlock_state = STATE_KEY_PRESSED;
 
         struct ev_timer *timeout = NULL;
-        START_TIMER(timeout, TSTAMP_N_SECS(0.25), redraw_timeout);
+        if (use_timer)
+          START_TIMER(timeout, TSTAMP_N_SECS(0.25), redraw_timeout);
         STOP_TIMER(clear_indicator_timeout);
     }
 
@@ -880,10 +889,12 @@ int main(int argc, char *argv[]) {
         {"help", no_argument, NULL, 'h'},
         {"no-unlock-indicator", no_argument, NULL, 'u'},
         {"image", required_argument, NULL, 'i'},
+        {"sequence", required_argument, NULL, 's'},
         {"tiling", no_argument, NULL, 't'},
         {"ignore-empty-password", no_argument, NULL, 'e'},
         {"inactivity-timeout", required_argument, NULL, 'I'},
         {"show-failed-attempts", no_argument, NULL, 'f'},
+        {"no-refresh", no_argument, NULL, 'r'},
         {NULL, no_argument, NULL, 0}};
 
     if ((pw = getpwuid(getuid())) == NULL)
@@ -891,7 +902,10 @@ int main(int argc, char *argv[]) {
     if ((username = pw->pw_name) == NULL)
         errx(EXIT_FAILURE, "pw->pw_name is NULL.\n");
 
-    char *optstring = "hvnbdc:p:ui:teI:f";
+    char *optstring = "hvnbdc:p:ui:s:teI:fr";
+    struct dirent **namelist;
+    char *full_path;
+    int i, j = 0, item_count;
     while ((o = getopt_long(argc, argv, optstring, longopts, &longoptind)) != -1) {
         switch (o) {
             case 'v':
@@ -924,6 +938,25 @@ int main(int argc, char *argv[]) {
             case 'u':
                 unlock_indicator = false;
                 break;
+            case 's':
+                item_count = scandir(optarg, &namelist, 0, alphasort);
+                for (i = 0; i < item_count && j < FRAME_COUNT; ++i) {
+                    char *extension;
+                    extension = strrchr(namelist[i]->d_name, '.');
+
+                    if (namelist[i]->d_type != DT_DIR && extension && strcmp(extension, ".png") == 0) {
+                        cairo_surface_t *surface;
+
+                        full_path = (char *) malloc(sizeof(char)*(strlen(optarg)+2+strlen(namelist[i]->d_name)));
+                        sprintf(full_path, "%s/%s", optarg, namelist[i]->d_name);
+                        surface = cairo_image_surface_create_from_png(full_path);
+                        if (surface)
+                            frames[j++] = surface;
+                        free(full_path);
+                    }
+                }
+                total_frame = j;
+                break;
             case 'i':
                 image_path = strdup(optarg);
                 break;
@@ -948,6 +981,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 'f':
                 show_failed_attempts = true;
+                break;
+            case 'r':
+                use_timer = false;
                 break;
             default:
                 errx(EXIT_FAILURE, "Syntax: i3lock [-v] [-n] [-b] [-d] [-c color] [-u] [-p win|default]"
